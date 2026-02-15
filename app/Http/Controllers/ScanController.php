@@ -59,9 +59,9 @@ class ScanController extends Controller
 
                 // Try to match with settings.py (case-insensitive)
                 $lowerFileKey = strtolower($fileKey);
-                $matchedKey = $itemKeysLowerMap[$lowerFileKey] ?? strtoupper($fileKey);
+                $matchedKey = $itemKeysLowerMap[$lowerFileKey] ?? $fileKey; // Keep original case from filename
 
-                // Store file using public disk
+                // Store file using public disk with ORIGINAL filename (preserve case)
                 $storedPath = $file->storeAs("{$scanPath}/textures", $originalName, 'public');
                 $fullPath = $disk->path($storedPath);
 
@@ -85,7 +85,7 @@ class ScanController extends Controller
             $textureKeys = array_keys($textures);
             $itemKeys = array_keys($items);
 
-            // 3. Compare lists (now both use uppercase keys)
+            // 3. Compare lists
             $texturesMissingNames = array_diff($textureKeys, $itemKeys);
             $namesMissingTextures = array_diff($itemKeys, $textureKeys);
 
@@ -175,7 +175,30 @@ class ScanController extends Controller
 
         $report = json_decode($disk->get($reportPath), true);
 
-        return view('results', ['report' => $report]);
+        // Get available pools from settings.py
+        $settingsPath = $disk->path("scans/{$id}/settings.py");
+        $availablePools = file_exists($settingsPath)
+            ? $this->getAvailablePools($settingsPath)
+            : ['ALL_ITEM_POOL', 'OWN_RISK_ITEM_POOL'];
+
+        return view('results', [
+            'report' => $report,
+            'availablePools' => $availablePools
+        ]);
+    }
+
+    public function viewSettings($id)
+    {
+        $disk = Storage::disk('public');
+        $settingsPath = "scans/{$id}/settings.py";
+
+        if (!$disk->exists($settingsPath)) {
+            return response()->json(['success' => false, 'error' => 'Settings file not found'], 404);
+        }
+
+        $content = $disk->get($settingsPath);
+
+        return response()->json(['success' => true, 'content' => $content]);
     }
 
     public function addTexture(Request $request)
@@ -212,8 +235,8 @@ class ScanController extends Controller
                 ], 400);
             }
 
-            // Store texture
-            $itemKey = strtoupper($request->item_key);
+            // Store texture preserving original case
+            $itemKey = $request->item_key; // Keep original case, don't force uppercase
             $textureFilename = $itemKey . '.png';
             $storedPath = $request->file('texture')->storeAs("{$scanPath}/textures", $textureFilename, 'public');
 
@@ -263,6 +286,7 @@ class ScanController extends Controller
                 'item_key' => 'required|string',
                 'item_label' => 'required|string',
                 'texture' => 'nullable|file|mimes:png',
+                'item_pool' => 'required|in:ALL_ITEM_POOL,OWN_RISK_ITEM_POOL',
             ]);
 
             $scanId = $request->scan_id;
@@ -278,7 +302,7 @@ class ScanController extends Controller
             $report = json_decode($disk->get($reportPath), true);
 
             $oldKey = $request->old_key;
-            $newKey = strtoupper($request->item_key);
+            $newKey = $request->item_key;
 
             // If texture is uploaded, validate and save it
             $textureUrl = null;
@@ -316,9 +340,12 @@ class ScanController extends Controller
                 }
             }
 
-            // Update settings.py if key changed
+            // Update settings.py if key changed or pool changed
             if ($oldKey !== $newKey) {
-                $this->updateItemKeyInSettings($disk, $scanPath, $oldKey, $newKey);
+                $this->updateItemKeyInSettings($disk, $scanPath, $oldKey, $newKey, $request->item_pool);
+            } else {
+                // Just update the pool if key didn't change
+                $this->updateItemPoolInSettings($disk, $scanPath, $newKey, $request->item_pool);
             }
 
             // Update report
@@ -344,12 +371,12 @@ class ScanController extends Controller
         }
     }
 
-    public function deleteTexture(Request $request)
+    public function bulkAddMissing(Request $request)
     {
         try {
             $request->validate([
                 'scan_id' => 'required|string',
-                'item_key' => 'required|string',
+                'item_pool' => 'required|in:ALL_ITEM_POOL,OWN_RISK_ITEM_POOL',
             ]);
 
             $scanId = $request->scan_id;
@@ -363,33 +390,94 @@ class ScanController extends Controller
             }
 
             $report = json_decode($disk->get($reportPath), true);
-            $itemKey = $request->item_key;
 
-            // Delete texture file
-            $texturePath = "{$scanPath}/textures/{$itemKey}.png";
-            if ($disk->exists($texturePath)) {
-                $disk->delete($texturePath);
+            // Find all items with missing names (not in settings.py)
+            $addedCount = 0;
+            foreach ($report['gallery'] as &$item) {
+                if ($item['missing_name'] && !$item['missing_texture']) {
+                    // Add to settings.py
+                    $this->addItemToSettings($disk, $scanPath, $item['key'], $request->item_pool);
+
+                    // Update item in report
+                    $item['missing_name'] = false;
+                    $item['has_problem'] = $item['missing_texture'] || $item['wrong_size'] || $item['duplicate'];
+
+                    $addedCount++;
+                }
             }
 
-            // Remove from settings.py
-            $this->removeItemFromSettings($disk, $scanPath, $itemKey);
-
-            // Update report
-            $report['gallery'] = array_values(array_filter($report['gallery'], function($item) use ($itemKey) {
-                return $item['key'] !== $itemKey;
-            }));
-
             // Update summary
-            $report['summary']['total_items'] = max(0, $report['summary']['total_items'] - 1);
-            $report['summary']['total_textures'] = max(0, $report['summary']['total_textures'] - 1);
+            $report['summary']['total_items'] += $addedCount;
+            $report['summary']['missing_names'] = max(0, $report['summary']['missing_names'] - $addedCount);
 
             // Save updated report
             $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
 
-            return response()->json(['success' => true]);
+            return response()->json([
+                'success' => true,
+                'added_count' => $addedCount,
+                'updated_items' => array_values(array_filter($report['gallery'], function($item) {
+                    return !$item['missing_name'];
+                }))
+            ]);
 
         } catch (\Exception $e) {
-            \Log::error('Delete texture error: ' . $e->getMessage());
+            \Log::error('Bulk add error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function deleteTextures(Request $request)
+    {
+        try {
+            $request->validate([
+                'scan_id' => 'required|string',
+                'item_keys' => 'required|array',
+                'item_keys.*' => 'required|string',
+            ]);
+
+            $scanId = $request->scan_id;
+            $scanPath = "scans/{$scanId}";
+            $disk = Storage::disk('public');
+
+            // Get current report
+            $reportPath = "{$scanPath}/report.json";
+            if (!$disk->exists($reportPath)) {
+                return response()->json(['success' => false, 'error' => 'Scan not found'], 404);
+            }
+
+            $report = json_decode($disk->get($reportPath), true);
+            $itemKeys = $request->item_keys;
+            $deletedCount = 0;
+
+            foreach ($itemKeys as $itemKey) {
+                // Delete texture file
+                $texturePath = "{$scanPath}/textures/{$itemKey}.png";
+                if ($disk->exists($texturePath)) {
+                    $disk->delete($texturePath);
+                    $deletedCount++;
+                }
+
+                // Remove from settings.py
+                $this->removeItemFromSettings($disk, $scanPath, $itemKey);
+
+                // Update report
+                $report['gallery'] = array_values(array_filter($report['gallery'], function($item) use ($itemKey) {
+                    return $item['key'] !== $itemKey;
+                }));
+            }
+
+            // Update summary
+            $report['summary']['total_items'] = max(0, $report['summary']['total_items'] - $deletedCount);
+            $report['summary']['total_textures'] = max(0, $report['summary']['total_textures'] - $deletedCount);
+
+            // Save updated report
+            $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            return response()->json(['success' => true, 'deleted_count' => $deletedCount]);
+
+        } catch (\Exception $e) {
+            \Log::error('Delete textures error: ' . $e->getMessage());
             return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
         }
     }
@@ -470,13 +558,64 @@ class ScanController extends Controller
         }
     }
 
-    private function updateItemKeyInSettings($disk, $scanPath, $oldKey, $newKey)
+    private function updateItemKeyInSettings($disk, $scanPath, $oldKey, $newKey, $newPool)
     {
         $settingsPath = "{$scanPath}/settings.py";
         $content = $disk->get($settingsPath);
 
-        // Replace the old key with new key
-        $content = str_replace('"' . $oldKey . '"', '"' . $newKey . '"', $content);
+        // Remove old key from both pools
+        $content = preg_replace('/\s*"' . preg_quote($oldKey, '/') . '",?\n?/', '', $content);
+
+        // Add new key to the specified pool
+        $poolPattern = "/{$newPool}\s*=\s*\[(.*?)\]/s";
+        if (preg_match($poolPattern, $content, $matches)) {
+            $listContent = $matches[1];
+            $newItem = '    "' . $newKey . '",';
+            $replacement = $newPool . ' = [' . $listContent . "\n" . $newItem . "\n]";
+            $content = preg_replace($poolPattern, $replacement, $content);
+        }
+
+        $disk->put($settingsPath, $content);
+    }
+
+    private function updateItemPoolInSettings($disk, $scanPath, $itemKey, $newPool)
+    {
+        $settingsPath = "{$scanPath}/settings.py";
+        $content = $disk->get($settingsPath);
+
+        // Check if item exists in the other pool
+        $pools = ['ALL_ITEM_POOL', 'OWN_RISK_ITEM_POOL'];
+        $currentPool = null;
+
+        foreach ($pools as $pool) {
+            if (preg_match("/{$pool}\s*=\s*\[(.*?)\]/s", $content, $matches)) {
+                if (strpos($matches[1], '"' . $itemKey . '"') !== false) {
+                    $currentPool = $pool;
+                    break;
+                }
+            }
+        }
+
+        // If already in the correct pool, do nothing
+        if ($currentPool === $newPool) {
+            return;
+        }
+
+        // Remove from current pool and add to new pool
+        if ($currentPool) {
+            $content = preg_replace('/\s*"' . preg_quote($itemKey, '/') . '",?\n?/', '', $content);
+        }
+
+        // Add to new pool
+        $poolPattern = "/{$newPool}\s*=\s*\[(.*?)\]/s";
+        if (preg_match($poolPattern, $content, $matches)) {
+            $listContent = $matches[1];
+            if (strpos($listContent, '"' . $itemKey . '"') === false) {
+                $newItem = '    "' . $itemKey . '",';
+                $replacement = $newPool . ' = [' . $listContent . "\n" . $newItem . "\n]";
+                $content = preg_replace($poolPattern, $replacement, $content);
+            }
+        }
 
         $disk->put($settingsPath, $content);
     }
@@ -500,18 +639,69 @@ class ScanController extends Controller
         // Extract ALL_ITEM_POOL
         if (preg_match('/ALL_ITEM_POOL\s*=\s*\[(.*?)\]/s', $content, $matches)) {
             $listContent = $matches[1];
-
-            // Extract quoted strings
             preg_match_all('/"([^"]+)"/m', $listContent, $stringMatches);
 
             foreach ($stringMatches[1] as $itemName) {
                 $itemName = trim($itemName);
-                // Keep original case, convert for display label
+                $items[$itemName] = $this->autoLabel($itemName);
+            }
+        }
+
+        // Extract OWN_RISK_ITEM_POOL
+        if (preg_match('/OWN_RISK_ITEM_POOL\s*=\s*\[(.*?)\]/s', $content, $matches)) {
+            $listContent = $matches[1];
+            preg_match_all('/"([^"]+)"/m', $listContent, $stringMatches);
+
+            foreach ($stringMatches[1] as $itemName) {
+                $itemName = trim($itemName);
+                $items[$itemName] = $this->autoLabel($itemName);
+            }
+        }
+
+        // Extract any other custom pools (e.g., VERSION_SPECIFIC_POOL, SHELF_POOL, etc.)
+        // Pattern: ANYTHING_POOL = [...]
+        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
+
+        foreach ($allPools as $poolMatch) {
+            $poolName = $poolMatch[1];
+            // Skip if already processed
+            if ($poolName === 'ALL_ITEM_POOL' || $poolName === 'OWN_RISK_ITEM_POOL') {
+                continue;
+            }
+
+            $listContent = $poolMatch[2];
+            preg_match_all('/"([^"]+)"/m', $listContent, $stringMatches);
+
+            foreach ($stringMatches[1] as $itemName) {
+                $itemName = trim($itemName);
                 $items[$itemName] = $this->autoLabel($itemName);
             }
         }
 
         return $items;
+    }
+
+    private function getAvailablePools($filePath)
+    {
+        $content = file_get_contents($filePath);
+        $pools = [];
+
+        // Find all pool names
+        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[/s', $content, $matches);
+
+        if (!empty($matches[1])) {
+            $pools = array_unique($matches[1]);
+        }
+
+        // Ensure default pools are always present
+        if (!in_array('ALL_ITEM_POOL', $pools)) {
+            $pools[] = 'ALL_ITEM_POOL';
+        }
+        if (!in_array('OWN_RISK_ITEM_POOL', $pools)) {
+            $pools[] = 'OWN_RISK_ITEM_POOL';
+        }
+
+        return $pools;
     }
 
     private function autoLabel($key)
