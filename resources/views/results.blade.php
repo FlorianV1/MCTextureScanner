@@ -82,6 +82,44 @@
         </button>
     </div>
 
+    <!-- Sorting Controls -->
+    <div class="bg-gray-800 rounded-lg shadow-lg p-4 mb-4 border border-gray-700">
+        <div class="flex flex-wrap gap-4 items-center">
+            <div class="flex items-center gap-2">
+                <svg class="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h9m5-4v12m0 0l-4-4m4 4l4-4"></path>
+                </svg>
+                <label class="text-gray-300 font-semibold">Sort by:</label>
+            </div>
+            <select id="sortBy" class="flex-1 min-w-[200px] px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="problems">🚨 Problems First (Default)</option>
+                <optgroup label="Alphabetical">
+                    <option value="name-asc">📝 Name (A → Z)</option>
+                    <option value="name-desc">📝 Name (Z → A)</option>
+                    <option value="key-asc">🔑 Key (A → Z)</option>
+                    <option value="key-desc">🔑 Key (Z → A)</option>
+                </optgroup>
+                <optgroup label="Status">
+                    <option value="status-complete">✅ Complete First</option>
+                    <option value="status-incomplete">⚠️ Incomplete First</option>
+                </optgroup>
+                <optgroup label="Problem Type">
+                    <option value="missing-texture">🖼️ Missing Textures First</option>
+                    <option value="missing-name">🏷️ Missing Names First</option>
+                    <option value="wrong-size">📏 Wrong Size First</option>
+                    <option value="duplicates">👥 Duplicates First</option>
+                </optgroup>
+                <optgroup label="Order Added">
+                    <option value="recently-added">🆕 Recently Added First</option>
+                    <option value="oldest-first">📅 Oldest First</option>
+                </optgroup>
+            </select>
+            <span id="sortIndicator" class="text-sm text-gray-400 hidden">
+                <span class="animate-pulse">⏳ Sorting...</span>
+            </span>
+        </div>
+    </div>
+
     <!-- Filters -->
     <div class="bg-gray-800 rounded-lg shadow-lg p-4 mb-6 border border-gray-700">
         <div class="flex flex-wrap gap-4 items-center">
@@ -116,7 +154,7 @@
 
     <!-- Gallery Grid -->
     <div id="gallery" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-6">
-        @foreach ($report['gallery'] as $item)
+        @foreach ($report['gallery'] as $index => $item)
             <div class="gallery-item bg-gray-800 rounded-lg shadow-lg p-5 flex flex-col items-center border border-gray-700 hover:border-blue-500 transition group"
                  data-key="{{ strtolower($item['key']) }}"
                  data-label="{{ strtolower($item['label'] ?? '') }}"
@@ -125,7 +163,9 @@
                  data-wrong-size="{{ $item['wrong_size'] ? 'true' : 'false' }}"
                  data-duplicate="{{ $item['duplicate'] ? 'true' : 'false' }}"
                  data-actual-key="{{ $item['key'] }}"
-                 data-texture-url="{{ $item['texture_url'] ?? '' }}">
+                 data-actual-label="{{ $item['label'] ?? '' }}"
+                 data-texture-url="{{ $item['texture_url'] ?? '' }}"
+                 data-index="{{ $index }}">
 
                 <!-- Selection Checkbox -->
                 <div class="w-full flex justify-end mb-2">
@@ -463,6 +503,149 @@
 
     searchBox.addEventListener('input', applyFilters);
     checkboxes.forEach(cb => cb.addEventListener('change', applyFilters));
+
+    // Sorting functionality
+    function applySorting() {
+        const sortBy = document.getElementById('sortBy').value;
+        const gallery = document.getElementById('gallery');
+        const items = Array.from(gallery.querySelectorAll('.gallery-item'));
+        const indicator = document.getElementById('sortIndicator');
+
+        // Show loading indicator for large sets
+        if (items.length > 50) {
+            indicator.classList.remove('hidden');
+        }
+
+        // Use setTimeout to allow UI to update
+        setTimeout(() => {
+            items.sort((a, b) => {
+                switch(sortBy) {
+                    case 'problems':
+                        // Problems first (has_problem = true), then alphabetical by key
+                        const aProblem = a.dataset.missingTexture === 'true' ||
+                            a.dataset.missingName === 'true' ||
+                            a.dataset.wrongSize === 'true' ||
+                            a.dataset.duplicate === 'true';
+                        const bProblem = b.dataset.missingTexture === 'true' ||
+                            b.dataset.missingName === 'true' ||
+                            b.dataset.wrongSize === 'true' ||
+                            b.dataset.duplicate === 'true';
+
+                        if (aProblem !== bProblem) {
+                            return bProblem ? 1 : -1;
+                        }
+                        return a.dataset.key.localeCompare(b.dataset.key);
+
+                    case 'name-asc':
+                        return a.dataset.actualLabel.localeCompare(b.dataset.actualLabel);
+
+                    case 'name-desc':
+                        return b.dataset.actualLabel.localeCompare(a.dataset.actualLabel);
+
+                    case 'key-asc':
+                        return a.dataset.key.localeCompare(b.dataset.key);
+
+                    case 'key-desc':
+                        return b.dataset.key.localeCompare(a.dataset.key);
+
+                    case 'status-complete':
+                        // Complete items first
+                        const aComplete = a.dataset.missingTexture === 'false' &&
+                            a.dataset.missingName === 'false' &&
+                            a.dataset.wrongSize === 'false' &&
+                            a.dataset.duplicate === 'false';
+                        const bComplete = b.dataset.missingTexture === 'false' &&
+                            b.dataset.missingName === 'false' &&
+                            b.dataset.wrongSize === 'false' &&
+                            b.dataset.duplicate === 'false';
+
+                        if (aComplete !== bComplete) {
+                            return aComplete ? -1 : 1;
+                        }
+                        return a.dataset.key.localeCompare(b.dataset.key);
+
+                    case 'status-incomplete':
+                        // Incomplete items first
+                        const aIncomplete = a.dataset.missingTexture === 'true' ||
+                            a.dataset.missingName === 'true' ||
+                            a.dataset.wrongSize === 'true' ||
+                            a.dataset.duplicate === 'true';
+                        const bIncomplete = b.dataset.missingTexture === 'true' ||
+                            b.dataset.missingName === 'true' ||
+                            b.dataset.wrongSize === 'true' ||
+                            b.dataset.duplicate === 'true';
+
+                        if (aIncomplete !== bIncomplete) {
+                            return aIncomplete ? -1 : 1;
+                        }
+                        return a.dataset.key.localeCompare(b.dataset.key);
+
+                    case 'missing-texture':
+                        // Missing textures first
+                        if (a.dataset.missingTexture !== b.dataset.missingTexture) {
+                            return a.dataset.missingTexture === 'true' ? -1 : 1;
+                        }
+                        return a.dataset.key.localeCompare(b.dataset.key);
+
+                    case 'missing-name':
+                        // Missing names first
+                        if (a.dataset.missingName !== b.dataset.missingName) {
+                            return a.dataset.missingName === 'true' ? -1 : 1;
+                        }
+                        return a.dataset.key.localeCompare(b.dataset.key);
+
+                    case 'wrong-size':
+                        // Wrong size first
+                        if (a.dataset.wrongSize !== b.dataset.wrongSize) {
+                            return a.dataset.wrongSize === 'true' ? -1 : 1;
+                        }
+                        return a.dataset.key.localeCompare(b.dataset.key);
+
+                    case 'duplicates':
+                        // Duplicates first
+                        if (a.dataset.duplicate !== b.dataset.duplicate) {
+                            return a.dataset.duplicate === 'true' ? -1 : 1;
+                        }
+                        return a.dataset.key.localeCompare(b.dataset.key);
+
+                    case 'recently-added':
+                        // Sort by original index (reverse = recently added first)
+                        return parseInt(b.dataset.index) - parseInt(a.dataset.index);
+
+                    case 'oldest-first':
+                        // Sort by original index (normal = oldest first)
+                        return parseInt(a.dataset.index) - parseInt(b.dataset.index);
+
+                    default:
+                        return 0;
+                }
+            });
+
+            // Re-append items in sorted order
+            items.forEach(item => gallery.appendChild(item));
+
+            // Hide indicator
+            indicator.classList.add('hidden');
+
+            // Show toast notification
+            const sortText = document.getElementById('sortBy').selectedOptions[0].text;
+            showToast('Sorted: ' + sortText.replace(/^[^\s]+\s/, ''), 'success'); // Remove emoji
+        }, 10);
+    }
+
+    // Auto-apply sorting on change
+    document.getElementById('sortBy').addEventListener('change', function() {
+        applySorting();
+        // Save preference
+        localStorage.setItem('textureScannerSort', this.value);
+    });
+
+    // Load saved sort preference on page load
+    const savedSort = localStorage.getItem('textureScannerSort');
+    if (savedSort) {
+        document.getElementById('sortBy').value = savedSort;
+        applySorting();
+    }
 
     // Multi-select functionality
     function updateSelectedCount() {
