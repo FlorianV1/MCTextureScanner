@@ -63,13 +63,16 @@
         </div>
     </div>
 
-    <!-- Add Texture and Multi-Delete Buttons -->
+    <!-- Action Buttons -->
     <div class="mb-6 flex gap-3 flex-wrap">
         <button onclick="showAddTextureModal()" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition">
             ➕ Add New Texture
         </button>
         <button onclick="showBulkAddModal()" class="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition" id="bulkAddBtn">
             ⚡ Quick Add All Missing
+        </button>
+        <button id="addToPoolBtn" onclick="showAddToPoolModal()" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition hidden">
+            📥 Add to Pool (<span id="selectedCountPool">0</span>)
         </button>
         <button id="deleteSelectedBtn" onclick="deleteSelected()" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition hidden">
             🗑️ Delete Selected (<span id="selectedCount">0</span>)
@@ -121,7 +124,7 @@
     </div>
 
     <!-- Filters -->
-    <div class="bg-gray-800 rounded-lg shadow-lg p-4 mb-6 border border-gray-700">
+    <div class="bg-gray-800 rounded-lg shadow-lg p-4 mb-4 border border-gray-700">
         <div class="flex flex-wrap gap-4 items-center">
             <input
                 type="text"
@@ -130,25 +133,52 @@
                 class="flex-1 min-w-[200px] px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
             >
             <label class="flex items-center gap-2 cursor-pointer text-gray-300">
-                <input type="checkbox" id="filterComplete" class="filter-checkbox">
+                <input type="checkbox" id="filterComplete" class="filter-checkbox w-4 h-4">
                 <span class="text-sm">✅ Complete</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer text-gray-300">
-                <input type="checkbox" id="filterMissingTexture" class="filter-checkbox">
+                <input type="checkbox" id="filterMissingTexture" class="filter-checkbox w-4 h-4">
                 <span class="text-sm">🖼️ Missing Texture</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer text-gray-300">
-                <input type="checkbox" id="filterMissingName" class="filter-checkbox">
+                <input type="checkbox" id="filterMissingName" class="filter-checkbox w-4 h-4">
                 <span class="text-sm">🏷️ Missing Name</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer text-gray-300">
-                <input type="checkbox" id="filterWrongSize" class="filter-checkbox">
+                <input type="checkbox" id="filterWrongSize" class="filter-checkbox w-4 h-4">
                 <span class="text-sm">📏 Wrong Size</span>
             </label>
             <label class="flex items-center gap-2 cursor-pointer text-gray-300">
-                <input type="checkbox" id="filterDuplicate" class="filter-checkbox">
+                <input type="checkbox" id="filterDuplicate" class="filter-checkbox w-4 h-4">
                 <span class="text-sm">👥 Duplicates</span>
             </label>
+        </div>
+    </div>
+
+    <!-- Item Filter Dropdown -->
+    <div class="bg-gray-800 rounded-lg shadow-lg p-4 mb-6 border border-gray-700">
+        <div class="flex flex-wrap gap-4 items-center">
+            <label class="text-gray-300 font-semibold">Item Filter:</label>
+
+            <!-- Pool Filter -->
+            <select id="poolFilter" class="px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">All Pools</option>
+                <option value="ALL_ITEM_POOL">📦 ALL_ITEM_POOL</option>
+                <option value="OWN_RISK_ITEM_POOL">⚠️ OWN_RISK_ITEM_POOL</option>
+                <option value="no_pool">❌ Not in Pool</option>
+            </select>
+
+            <!-- Common Words Filter -->
+            <select id="wordFilter" class="px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <option value="">All Items</option>
+                <optgroup label="Common Words (5+ items)">
+                    <!-- Dynamically populated by JavaScript -->
+                </optgroup>
+            </select>
+
+            <button onclick="clearItemFilters()" class="px-4 py-2 bg-gray-700 hover:bg-gray-600 text-white rounded-lg transition text-sm">
+                Clear Filters
+            </button>
         </div>
     </div>
 
@@ -165,18 +195,18 @@
                  data-actual-key="{{ $item['key'] }}"
                  data-actual-label="{{ $item['label'] ?? '' }}"
                  data-texture-url="{{ $item['texture_url'] ?? '' }}"
+                 data-pool="{{ $item['pool'] ?? '' }}"
                  data-index="{{ $index }}">
 
-                <!-- Selection Checkbox -->
+                <!-- Larger Selection Checkbox -->
                 <div class="w-full flex justify-end mb-2">
-                    <input type="checkbox" class="item-checkbox w-5 h-5 cursor-pointer" data-item-key="{{ $item['key'] }}" onchange="updateSelectedCount()">
+                    <input type="checkbox" class="item-checkbox w-6 h-6 cursor-pointer rounded border-2 border-gray-600 hover:border-blue-500 transition" data-item-key="{{ $item['key'] }}" onchange="updateSelectedCount()">
                 </div>
 
-                <!-- Image - 128x128 (nice middle size) -->
+                <!-- Image -->
                 <div class="w-40 h-40 mb-3 flex items-center justify-center bg-gray-900 rounded-lg border-2 border-gray-700 relative group/img">
                     @if ($item['texture_url'])
                         <img src="{{ $item['texture_url'] }}" alt="{{ $item['key'] }}" class="pixelated" style="width: 128px; height: 128px; image-rendering: pixelated;">
-                        <!-- Download button appears on hover -->
                         <button onclick="downloadImage('{{ $item['texture_url'] }}', '{{ strtolower($item['key']) }}.png')"
                                 class="absolute top-2 right-2 bg-blue-600 hover:bg-blue-700 text-white p-1.5 rounded-lg opacity-0 group-hover/img:opacity-100 transition shadow-lg"
                                 title="Download image">
@@ -210,6 +240,11 @@
                     @if (!$item['missing_texture'] && !$item['missing_name'] && !$item['wrong_size'] && !$item['duplicate'])
                         <span class="px-2.5 py-1 bg-green-900 text-green-300 text-xs rounded border border-green-700 font-medium">✅ Complete</span>
                     @endif
+                    @if (isset($item['pool']) && $item['pool'])
+                        <span class="px-2.5 py-1 {{ $item['pool'] === 'ALL_ITEM_POOL' ? 'bg-blue-900 text-blue-300 border-blue-700' : 'bg-orange-900 text-orange-300 border-orange-700' }} text-xs rounded border font-medium">
+                            {{ $item['pool'] === 'ALL_ITEM_POOL' ? '📦' : '⚠️' }}
+                        </span>
+                    @endif
                     @if ($item['missing_texture'])
                         <span class="px-2.5 py-1 bg-red-900 text-red-300 text-xs rounded border border-red-700 font-medium">No Texture</span>
                     @endif
@@ -218,8 +253,8 @@
                     @endif
                     @if ($item['wrong_size'])
                         <span class="px-2.5 py-1 bg-yellow-900 text-yellow-300 text-xs rounded border border-yellow-700 font-medium">
-                                {{ $item['wrong_size_info']['width'] }}×{{ $item['wrong_size_info']['height'] }}
-                            </span>
+                            {{ $item['wrong_size_info']['width'] }}×{{ $item['wrong_size_info']['height'] }}
+                        </span>
                     @endif
                     @if ($item['duplicate'])
                         <span class="px-2.5 py-1 bg-purple-900 text-purple-300 text-xs rounded border border-purple-700 font-medium">Duplicate</span>
@@ -250,6 +285,37 @@
         <button onclick="closeSettingsModal()" class="bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition">
             Close
         </button>
+    </div>
+</div>
+
+<!-- Add to Pool Modal -->
+<div id="addToPoolModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+    <div class="bg-gray-800 rounded-lg shadow-2xl p-8 max-w-md w-full border border-gray-700">
+        <h2 class="text-2xl font-bold text-white mb-6">Add Selected to Pool</h2>
+        <p class="text-gray-300 mb-6">Add <strong><span id="addToPoolCount">0</span> selected item(s)</strong> to settings.py</p>
+
+        <form id="addToPoolForm">
+            @csrf
+            <input type="hidden" name="scan_id" value="{{ $report['scan_id'] }}">
+
+            <div class="mb-6">
+                <label class="block text-gray-300 font-semibold mb-2">Add to which pool?</label>
+                <select name="item_pool" required
+                        class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="ALL_ITEM_POOL">📦 ALL_ITEM_POOL</option>
+                    <option value="OWN_RISK_ITEM_POOL">⚠️ OWN_RISK_ITEM_POOL</option>
+                </select>
+            </div>
+
+            <div class="flex gap-3">
+                <button type="submit" class="flex-1 bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition">
+                    ✅ Add to Pool
+                </button>
+                <button type="button" onclick="closeAddToPoolModal()" class="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                    Cancel
+                </button>
+            </div>
+        </form>
     </div>
 </div>
 
@@ -298,15 +364,13 @@
             <input type="hidden" name="scan_id" value="{{ $report['scan_id'] }}">
 
             <div class="mb-4">
-                <label class="block text-gray-300 font-semibold mb-2">
-                    Item Key
-                </label>
+                <label class="block text-gray-300 font-semibold mb-2">Item Key</label>
                 <input id="itemKey" type="text" name="item_key" required
                        placeholder="DIAMOND_SWORD"
                        oninput="updateFilenamePreview(this.value)"
                        pattern="[A-Z0-9_]+"
                        class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <p class="text-xs text-gray-400 mt-1">Only UPPERCASE letters, numbers, and underscores allowed</p>
+                <p class="text-xs text-gray-400 mt-1">Only UPPERCASE letters, numbers, and underscores</p>
             </div>
 
             <div class="mb-4">
@@ -348,14 +412,12 @@
             <input type="hidden" name="old_key" id="editOldKey">
 
             <div class="mb-4">
-                <label class="block text-gray-300 font-semibold mb-2">
-                    Item Key
-                </label>
+                <label class="block text-gray-300 font-semibold mb-2">Item Key</label>
                 <input type="text" name="item_key" id="editKey" required
                        oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9_]/g, '')"
                        pattern="[A-Z0-9_]+"
                        class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <p class="text-xs text-gray-400 mt-1">Changing this will rename the PNG file to <span id="editFilenamePreview" class="text-green-400 font-mono">key.png</span></p>
+                <p class="text-xs text-gray-400 mt-1">Will rename PNG to: <span id="editFilenamePreview" class="text-green-400 font-mono">key.png</span></p>
             </div>
 
             <div class="mb-4">
@@ -393,17 +455,54 @@
         image-rendering: -moz-crisp-edges;
         image-rendering: crisp-edges;
     }
+
+    /* Better checkbox styling */
+    .item-checkbox {
+        accent-color: #3b82f6;
+    }
 </style>
 
 <script>
     const scanId = '{{ $report['scan_id'] }}';
     const searchBox = document.getElementById('searchBox');
     const checkboxes = document.querySelectorAll('.filter-checkbox');
+    const poolFilter = document.getElementById('poolFilter');
+    const wordFilter = document.getElementById('wordFilter');
     let galleryItems = document.querySelectorAll('.gallery-item');
+
+    // Build common words filter
+    function buildWordFilter() {
+        const wordCounts = {};
+
+        galleryItems.forEach(item => {
+            const key = item.dataset.actualKey;
+            const words = key.split('_');
+
+            words.forEach(word => {
+                if (word.length > 2) { // Ignore very short words
+                    wordCounts[word] = (wordCounts[word] || 0) + 1;
+                }
+            });
+        });
+
+        // Get words that appear 5+ times
+        const commonWords = Object.entries(wordCounts)
+            .filter(([word, count]) => count >= 5)
+            .sort((a, b) => b[1] - a[1]); // Sort by frequency
+
+        const optgroup = wordFilter.querySelector('optgroup');
+        commonWords.forEach(([word, count]) => {
+            const option = document.createElement('option');
+            option.value = word;
+            option.textContent = `${word} (${count})`;
+            optgroup.appendChild(option);
+        });
+    }
+
+    buildWordFilter();
 
     // Update filename preview in Add modal
     function updateFilenamePreview(value) {
-        // Force uppercase and remove invalid characters
         const cleanValue = value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
         document.getElementById('itemKey').value = cleanValue;
 
@@ -432,7 +531,6 @@
             .catch(err => console.error('Download failed:', err));
     }
 
-    // Toast notification system
     function showToast(message, type = 'success') {
         const toast = document.createElement('div');
         toast.className = `fixed top-4 right-4 px-6 py-4 rounded-lg shadow-lg text-white font-semibold z-50 transition-opacity ${
@@ -447,10 +545,9 @@
         }, 3000);
     }
 
-    // Calculate complete count
     function updateCompleteCount() {
         let complete = 0;
-        galleryItems = document.querySelectorAll('.gallery-item'); // Refresh list
+        galleryItems = document.querySelectorAll('.gallery-item');
         galleryItems.forEach(item => {
             if (item.dataset.missingTexture === 'false' &&
                 item.dataset.missingName === 'false' &&
@@ -473,11 +570,17 @@
             duplicate: document.getElementById('filterDuplicate').checked,
         };
 
+        const poolFilterValue = poolFilter.value;
+        const wordFilterValue = wordFilter.value;
+
         const anyFilterActive = Object.values(filters).some(v => v);
 
         galleryItems.forEach(item => {
             const key = item.dataset.key || '';
             const label = item.dataset.label || '';
+            const actualKey = item.dataset.actualKey || '';
+            const itemPool = item.dataset.pool || '';
+
             const matchesSearch = !searchTerm || key.includes(searchTerm) || label.includes(searchTerm);
 
             let matchesFilters = true;
@@ -496,12 +599,36 @@
                 );
             }
 
-            item.style.display = (matchesSearch && matchesFilters) ? 'flex' : 'none';
+            // Pool filter
+            let matchesPool = true;
+            if (poolFilterValue) {
+                if (poolFilterValue === 'no_pool') {
+                    matchesPool = !itemPool;
+                } else {
+                    matchesPool = itemPool === poolFilterValue;
+                }
+            }
+
+            // Word filter
+            let matchesWord = true;
+            if (wordFilterValue) {
+                matchesWord = actualKey.includes(wordFilterValue);
+            }
+
+            item.style.display = (matchesSearch && matchesFilters && matchesPool && matchesWord) ? 'flex' : 'none';
         });
+    }
+
+    function clearItemFilters() {
+        poolFilter.value = '';
+        wordFilter.value = '';
+        applyFilters();
     }
 
     searchBox.addEventListener('input', applyFilters);
     checkboxes.forEach(cb => cb.addEventListener('change', applyFilters));
+    poolFilter.addEventListener('change', applyFilters);
+    wordFilter.addEventListener('change', applyFilters);
 
     // Sorting functionality
     function applySorting() {
@@ -510,17 +637,14 @@
         const items = Array.from(gallery.querySelectorAll('.gallery-item'));
         const indicator = document.getElementById('sortIndicator');
 
-        // Show loading indicator for large sets
         if (items.length > 50) {
             indicator.classList.remove('hidden');
         }
 
-        // Use setTimeout to allow UI to update
         setTimeout(() => {
             items.sort((a, b) => {
                 switch(sortBy) {
                     case 'problems':
-                        // Problems first (has_problem = true), then alphabetical by key
                         const aProblem = a.dataset.missingTexture === 'true' ||
                             a.dataset.missingName === 'true' ||
                             a.dataset.wrongSize === 'true' ||
@@ -548,7 +672,6 @@
                         return b.dataset.key.localeCompare(a.dataset.key);
 
                     case 'status-complete':
-                        // Complete items first
                         const aComplete = a.dataset.missingTexture === 'false' &&
                             a.dataset.missingName === 'false' &&
                             a.dataset.wrongSize === 'false' &&
@@ -564,7 +687,6 @@
                         return a.dataset.key.localeCompare(b.dataset.key);
 
                     case 'status-incomplete':
-                        // Incomplete items first
                         const aIncomplete = a.dataset.missingTexture === 'true' ||
                             a.dataset.missingName === 'true' ||
                             a.dataset.wrongSize === 'true' ||
@@ -580,39 +702,33 @@
                         return a.dataset.key.localeCompare(b.dataset.key);
 
                     case 'missing-texture':
-                        // Missing textures first
                         if (a.dataset.missingTexture !== b.dataset.missingTexture) {
                             return a.dataset.missingTexture === 'true' ? -1 : 1;
                         }
                         return a.dataset.key.localeCompare(b.dataset.key);
 
                     case 'missing-name':
-                        // Missing names first
                         if (a.dataset.missingName !== b.dataset.missingName) {
                             return a.dataset.missingName === 'true' ? -1 : 1;
                         }
                         return a.dataset.key.localeCompare(b.dataset.key);
 
                     case 'wrong-size':
-                        // Wrong size first
                         if (a.dataset.wrongSize !== b.dataset.wrongSize) {
                             return a.dataset.wrongSize === 'true' ? -1 : 1;
                         }
                         return a.dataset.key.localeCompare(b.dataset.key);
 
                     case 'duplicates':
-                        // Duplicates first
                         if (a.dataset.duplicate !== b.dataset.duplicate) {
                             return a.dataset.duplicate === 'true' ? -1 : 1;
                         }
                         return a.dataset.key.localeCompare(b.dataset.key);
 
                     case 'recently-added':
-                        // Sort by original index (reverse = recently added first)
                         return parseInt(b.dataset.index) - parseInt(a.dataset.index);
 
                     case 'oldest-first':
-                        // Sort by original index (normal = oldest first)
                         return parseInt(a.dataset.index) - parseInt(b.dataset.index);
 
                     default:
@@ -620,26 +736,19 @@
                 }
             });
 
-            // Re-append items in sorted order
             items.forEach(item => gallery.appendChild(item));
-
-            // Hide indicator
             indicator.classList.add('hidden');
 
-            // Show toast notification
             const sortText = document.getElementById('sortBy').selectedOptions[0].text;
-            showToast('Sorted: ' + sortText.replace(/^[^\s]+\s/, ''), 'success'); // Remove emoji
+            showToast('Sorted: ' + sortText.replace(/^[^\s]+\s/, ''), 'success');
         }, 10);
     }
 
-    // Auto-apply sorting on change
     document.getElementById('sortBy').addEventListener('change', function() {
         applySorting();
-        // Save preference
         localStorage.setItem('textureScannerSort', this.value);
     });
 
-    // Load saved sort preference on page load
     const savedSort = localStorage.getItem('textureScannerSort');
     if (savedSort) {
         document.getElementById('sortBy').value = savedSort;
@@ -650,7 +759,9 @@
     function updateSelectedCount() {
         const selected = document.querySelectorAll('.item-checkbox:checked').length;
         document.getElementById('selectedCount').textContent = selected;
+        document.getElementById('selectedCountPool').textContent = selected;
         document.getElementById('deleteSelectedBtn').classList.toggle('hidden', selected === 0);
+        document.getElementById('addToPoolBtn').classList.toggle('hidden', selected === 0);
         document.getElementById('deselectAllBtn').classList.toggle('hidden', selected === 0);
     }
 
@@ -667,6 +778,52 @@
         document.querySelectorAll('.item-checkbox').forEach(cb => cb.checked = false);
         updateSelectedCount();
     }
+
+    // Add to Pool Modal
+    function showAddToPoolModal() {
+        const selected = document.querySelectorAll('.item-checkbox:checked').length;
+        document.getElementById('addToPoolCount').textContent = selected;
+        document.getElementById('addToPoolModal').classList.remove('hidden');
+    }
+
+    function closeAddToPoolModal() {
+        document.getElementById('addToPoolModal').classList.add('hidden');
+    }
+
+    document.getElementById('addToPoolForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+
+        const selected = Array.from(document.querySelectorAll('.item-checkbox:checked'))
+            .map(cb => cb.dataset.itemKey);
+
+        try {
+            const response = await fetch('/scan/bulk-add-to-pool', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    scan_id: scanId,
+                    item_keys: selected,
+                    item_pool: formData.get('item_pool')
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showToast(`Added ${result.added_count} item(s) to ${formData.get('item_pool')}`, 'success');
+                closeAddToPoolModal();
+                deselectAll();
+                location.reload(); // Reload to update pool badges
+            } else {
+                showToast('Error: ' + result.error, 'error');
+            }
+        } catch (error) {
+            showToast('Failed: ' + error.message, 'error');
+        }
+    });
 
     async function deleteSelected() {
         const selected = Array.from(document.querySelectorAll('.item-checkbox:checked'))
@@ -688,13 +845,11 @@
 
             const result = await response.json();
             if (result.success) {
-                // Remove items from DOM
                 selected.forEach(key => {
                     const item = document.querySelector(`[data-actual-key="${key}"]`);
                     if (item) item.remove();
                 });
 
-                // Update counts
                 const currentTotal = parseInt(document.getElementById('totalItems').textContent);
                 document.getElementById('totalItems').textContent = currentTotal - result.deleted_count;
                 document.getElementById('totalTextures').textContent = currentTotal - result.deleted_count;
@@ -734,31 +889,24 @@
 
             const result = await response.json();
             if (result.success) {
-                // Update all items that were added
                 result.updated_items.forEach(updatedItem => {
                     const item = document.querySelector(`[data-actual-key="${updatedItem.key}"]`);
                     if (item) {
-                        // Update data attributes
                         item.dataset.missingName = 'false';
 
-                        // Remove "No Name Set" badge
                         const labelDiv = item.querySelector('.text-sm.font-semibold');
                         if (labelDiv) {
                             labelDiv.innerHTML = updatedItem.label;
                         }
 
-                        // Update badges
                         const badgesDiv = item.querySelector('.flex.flex-wrap.gap-1\\.5');
                         if (badgesDiv) {
-                            // Remove "No Name" badge
                             const noNameBadge = Array.from(badgesDiv.children).find(b => b.textContent.includes('No Name'));
                             if (noNameBadge) noNameBadge.remove();
 
-                            // Check if complete now
                             if (item.dataset.missingTexture === 'false' &&
                                 item.dataset.wrongSize === 'false' &&
                                 item.dataset.duplicate === 'false') {
-                                // Add complete badge
                                 const completeBadge = document.createElement('span');
                                 completeBadge.className = 'px-2.5 py-1 bg-green-900 text-green-300 text-xs rounded border border-green-700 font-medium';
                                 completeBadge.textContent = '✅ Complete';
@@ -768,7 +916,6 @@
                     }
                 });
 
-                // Update summary counts
                 const currentMissing = parseInt(document.getElementById('missingNames').textContent);
                 document.getElementById('missingNames').textContent = Math.max(0, currentMissing - result.added_count);
 
@@ -833,7 +980,6 @@
 
             const result = await response.json();
             if (result.success) {
-                // Reload to get new item (easiest for adding completely new items)
                 location.reload();
             } else {
                 showToast('Error: ' + result.error, 'error');
@@ -848,7 +994,7 @@
         document.getElementById('editOldKey').value = item.key;
         document.getElementById('editKey').value = item.key;
         document.getElementById('editFilenamePreview').textContent = item.key.toLowerCase() + '.png';
-        document.getElementById('editPool').value = 'ALL_ITEM_POOL'; // Default
+        document.getElementById('editPool').value = item.pool || 'ALL_ITEM_POOL';
         document.getElementById('editModal').classList.remove('hidden');
     }
 
@@ -872,7 +1018,6 @@
 
             const result = await response.json();
             if (result.success) {
-                // Reload for edits (key changes require reload for file rename)
                 location.reload();
             } else {
                 showToast('Error: ' + result.error, 'error');
@@ -898,11 +1043,9 @@
 
             const result = await response.json();
             if (result.success) {
-                // Remove item from DOM
                 const item = document.querySelector(`[data-actual-key="${key}"]`);
                 if (item) item.remove();
 
-                // Update counts
                 const currentTotal = parseInt(document.getElementById('totalItems').textContent);
                 document.getElementById('totalItems').textContent = currentTotal - 1;
                 document.getElementById('totalTextures').textContent = currentTotal - 1;
