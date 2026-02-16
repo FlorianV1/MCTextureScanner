@@ -59,10 +59,13 @@ class ScanController extends Controller
 
                 // Try to match with settings.py (case-insensitive)
                 $lowerFileKey = strtolower($fileKey);
-                $matchedKey = $itemKeysLowerMap[$lowerFileKey] ?? $fileKey; // Keep original case from filename
+                $matchedKey = $itemKeysLowerMap[$lowerFileKey] ?? $fileKey;
 
-                // Store file using public disk with ORIGINAL filename (preserve case)
-                $storedPath = $file->storeAs("{$scanPath}/textures", $originalName, 'public');
+                // FIX 1: Force lowercase filename
+                $lowercaseFilename = strtolower($originalName);
+
+                // Store file with lowercase filename
+                $storedPath = $file->storeAs("{$scanPath}/textures", $lowercaseFilename, 'public');
                 $fullPath = $disk->path($storedPath);
 
                 // Check for duplicates
@@ -206,10 +209,11 @@ class ScanController extends Controller
         try {
             $request->validate([
                 'scan_id' => 'required|string',
-                'item_key' => 'required|string',
-                'item_label' => 'required|string',
+                'item_key' => 'required|string|regex:/^[A-Z0-9_]+$/',
                 'texture' => 'required|file|mimes:png',
                 'item_pool' => 'required|in:ALL_ITEM_POOL,OWN_RISK_ITEM_POOL',
+            ], [
+                'item_key.regex' => 'Item key must be uppercase letters, numbers, and underscores only (e.g., DIAMOND_SWORD)'
             ]);
 
             $scanId = $request->scan_id;
@@ -224,6 +228,9 @@ class ScanController extends Controller
 
             $report = json_decode($disk->get($reportPath), true);
 
+            // Force uppercase
+            $itemKey = strtoupper($request->item_key);
+
             // Check dimensions
             $tempPath = $request->file('texture')->getRealPath();
             $size = getimagesize($tempPath);
@@ -235,18 +242,20 @@ class ScanController extends Controller
                 ], 400);
             }
 
-            // Store texture preserving original case
-            $itemKey = $request->item_key; // Keep original case, don't force uppercase
-            $textureFilename = $itemKey . '.png';
+            // Store texture with lowercase filename
+            $textureFilename = strtolower($itemKey) . '.png';
             $storedPath = $request->file('texture')->storeAs("{$scanPath}/textures", $textureFilename, 'public');
 
-            // Update settings.py
+            // Update settings.py with proper formatting
             $this->addItemToSettings($disk, $scanPath, $itemKey, $request->item_pool);
+
+            // Auto-generate label from key
+            $itemLabel = $this->autoLabel($itemKey);
 
             // Update report
             $newItem = [
                 'key' => $itemKey,
-                'label' => $request->item_label,
+                'label' => $itemLabel,
                 'texture_url' => asset('storage/' . $storedPath),
                 'missing_texture' => false,
                 'missing_name' => false,
@@ -283,10 +292,11 @@ class ScanController extends Controller
             $request->validate([
                 'scan_id' => 'required|string',
                 'old_key' => 'required|string',
-                'item_key' => 'required|string',
-                'item_label' => 'required|string',
+                'item_key' => 'required|string|regex:/^[A-Z0-9_]+$/',
                 'texture' => 'nullable|file|mimes:png',
                 'item_pool' => 'required|in:ALL_ITEM_POOL,OWN_RISK_ITEM_POOL',
+            ], [
+                'item_key.regex' => 'Item key must be uppercase letters, numbers, and underscores only (e.g., DIAMOND_SWORD)'
             ]);
 
             $scanId = $request->scan_id;
@@ -301,8 +311,9 @@ class ScanController extends Controller
 
             $report = json_decode($disk->get($reportPath), true);
 
-            $oldKey = $request->old_key;
-            $newKey = $request->item_key;
+            // Force uppercase
+            $oldKey = strtoupper($request->old_key);
+            $newKey = strtoupper($request->item_key);
 
             // If texture is uploaded, validate and save it
             $textureUrl = null;
@@ -319,20 +330,20 @@ class ScanController extends Controller
 
                 // Delete old texture if key changed
                 if ($oldKey !== $newKey) {
-                    $oldTexturePath = "{$scanPath}/textures/{$oldKey}.png";
+                    $oldTexturePath = "{$scanPath}/textures/" . strtolower($oldKey) . ".png";
                     if ($disk->exists($oldTexturePath)) {
                         $disk->delete($oldTexturePath);
                     }
                 }
 
-                // Store new texture
-                $textureFilename = $newKey . '.png';
+                // Store new texture with lowercase filename
+                $textureFilename = strtolower($newKey) . '.png';
                 $storedPath = $request->file('texture')->storeAs("{$scanPath}/textures", $textureFilename, 'public');
                 $textureUrl = asset('storage/' . $storedPath);
             } else if ($oldKey !== $newKey) {
                 // Key changed but no new texture - rename the file
-                $oldTexturePath = "{$scanPath}/textures/{$oldKey}.png";
-                $newTexturePath = "{$scanPath}/textures/{$newKey}.png";
+                $oldTexturePath = "{$scanPath}/textures/" . strtolower($oldKey) . ".png";
+                $newTexturePath = "{$scanPath}/textures/" . strtolower($newKey) . ".png";
 
                 if ($disk->exists($oldTexturePath)) {
                     $disk->move($oldTexturePath, $newTexturePath);
@@ -348,11 +359,14 @@ class ScanController extends Controller
                 $this->updateItemPoolInSettings($disk, $scanPath, $newKey, $request->item_pool);
             }
 
+            // Auto-generate label from key
+            $itemLabel = $this->autoLabel($newKey);
+
             // Update report
             foreach ($report['gallery'] as &$item) {
                 if ($item['key'] === $oldKey) {
                     $item['key'] = $newKey;
-                    $item['label'] = $request->item_label;
+                    $item['label'] = $itemLabel;
                     if ($textureUrl) {
                         $item['texture_url'] = $textureUrl;
                     }
@@ -451,8 +465,8 @@ class ScanController extends Controller
             $deletedCount = 0;
 
             foreach ($itemKeys as $itemKey) {
-                // Delete texture file
-                $texturePath = "{$scanPath}/textures/{$itemKey}.png";
+                // FIX 1: Delete texture file with lowercase filename
+                $texturePath = "{$scanPath}/textures/" . strtolower($itemKey) . ".png";
                 if ($disk->exists($texturePath)) {
                     $disk->delete($texturePath);
                     $deletedCount++;
@@ -535,22 +549,55 @@ class ScanController extends Controller
         }
     }
 
+    /**
+     * FIX 2: Add item to settings.py with proper formatting (each item on its own line)
+     * Prevents duplicate entries by checking case-insensitively
+     */
     private function addItemToSettings($disk, $scanPath, $itemKey, $pool)
     {
         $settingsPath = "{$scanPath}/settings.py";
         $content = $disk->get($settingsPath);
 
-        // Find the appropriate pool and add the item
+        // Find the appropriate pool
         $poolPattern = "/{$pool}\s*=\s*\[(.*?)\]/s";
 
         if (preg_match($poolPattern, $content, $matches)) {
             $listContent = $matches[1];
 
-            // Check if item already exists
-            if (strpos($listContent, '"' . $itemKey . '"') === false) {
-                // Add the new item before the closing bracket
-                $newItem = '    "' . $itemKey . '",';
-                $replacement = $pool . ' = [' . $listContent . "\n" . $newItem . "\n]";
+            // Parse existing items
+            preg_match_all('/"([^"]+)"/m', $listContent, $existingItems);
+            $items = $existingItems[1];
+
+            // Check if item already exists (case-insensitive)
+            $itemExists = false;
+            foreach ($items as $existingItem) {
+                if (strcasecmp($existingItem, $itemKey) === 0) {
+                    $itemExists = true;
+                    break;
+                }
+            }
+
+            if (!$itemExists) {
+                $items[] = $itemKey;
+
+                // Remove duplicates (case-insensitive)
+                $uniqueItems = [];
+                $lowerMap = [];
+                foreach ($items as $item) {
+                    $lowerKey = strtolower($item);
+                    if (!isset($lowerMap[$lowerKey])) {
+                        $uniqueItems[] = $item;
+                        $lowerMap[$lowerKey] = true;
+                    }
+                }
+
+                // Build new formatted list with each item on its own line
+                $formattedItems = '';
+                foreach ($uniqueItems as $item) {
+                    $formattedItems .= "\n    \"{$item}\",";
+                }
+
+                $replacement = "{$pool} = [{$formattedItems}\n]";
                 $content = preg_replace($poolPattern, $replacement, $content);
 
                 $disk->put($settingsPath, $content);
@@ -558,79 +605,162 @@ class ScanController extends Controller
         }
     }
 
+    /**
+     * Update item key in settings.py (rename from oldKey to newKey and move to newPool)
+     * Prevents duplicate entries
+     */
     private function updateItemKeyInSettings($disk, $scanPath, $oldKey, $newKey, $newPool)
     {
         $settingsPath = "{$scanPath}/settings.py";
         $content = $disk->get($settingsPath);
 
-        // Remove old key from both pools
-        $content = preg_replace('/\s*"' . preg_quote($oldKey, '/') . '",?\n?/', '', $content);
+        // Parse all pools and their items
+        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
 
-        // Add new key to the specified pool
-        $poolPattern = "/{$newPool}\s*=\s*\[(.*?)\]/s";
-        if (preg_match($poolPattern, $content, $matches)) {
-            $listContent = $matches[1];
-            $newItem = '    "' . $newKey . '",';
-            $replacement = $newPool . ' = [' . $listContent . "\n" . $newItem . "\n]";
-            $content = preg_replace($poolPattern, $replacement, $content);
+        $poolsData = [];
+
+        foreach ($allPools as $poolMatch) {
+            $poolName = $poolMatch[1];
+            $listContent = $poolMatch[2];
+
+            // Extract all items from this pool
+            preg_match_all('/"([^"]+)"/m', $listContent, $itemMatches);
+            $items = array_filter($itemMatches[1]);
+
+            // Remove old key from all pools (case-insensitive)
+            $items = array_filter($items, function($item) use ($oldKey) {
+                return strcasecmp($item, $oldKey) !== 0;
+            });
+
+            // Add new key only to the target pool
+            if ($poolName === $newPool) {
+                $items[] = $newKey;
+            }
+
+            $poolsData[$poolName] = array_values(array_unique($items));
+        }
+
+        // Rebuild the entire file
+        foreach ($poolsData as $poolName => $items) {
+            if (empty($items)) {
+                $replacement = "{$poolName} = [\n]";
+            } else {
+                $formattedItems = '';
+                foreach ($items as $item) {
+                    $formattedItems .= "\n    \"{$item}\",";
+                }
+                $replacement = "{$poolName} = [{$formattedItems}\n]";
+            }
+
+            $pattern = '/' . preg_quote($poolName, '/') . '\s*=\s*\[.*?\]/s';
+            $content = preg_replace($pattern, $replacement, $content);
         }
 
         $disk->put($settingsPath, $content);
     }
 
+    /**
+     * Move item to a different pool without changing the key
+     * Prevents duplicate entries
+     */
     private function updateItemPoolInSettings($disk, $scanPath, $itemKey, $newPool)
     {
         $settingsPath = "{$scanPath}/settings.py";
         $content = $disk->get($settingsPath);
 
-        // Check if item exists in the other pool
-        $pools = ['ALL_ITEM_POOL', 'OWN_RISK_ITEM_POOL'];
-        $currentPool = null;
+        // Parse all pools and their items
+        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
 
-        foreach ($pools as $pool) {
-            if (preg_match("/{$pool}\s*=\s*\[(.*?)\]/s", $content, $matches)) {
-                if (strpos($matches[1], '"' . $itemKey . '"') !== false) {
-                    $currentPool = $pool;
-                    break;
+        $poolsData = [];
+
+        foreach ($allPools as $poolMatch) {
+            $poolName = $poolMatch[1];
+            $listContent = $poolMatch[2];
+
+            // Extract all items from this pool
+            preg_match_all('/"([^"]+)"/m', $listContent, $itemMatches);
+            $items = array_filter($itemMatches[1]);
+
+            // Remove item from all pools (case-insensitive)
+            $items = array_filter($items, function($item) use ($itemKey) {
+                return strcasecmp($item, $itemKey) !== 0;
+            });
+
+            // Add item only to the target pool
+            if ($poolName === $newPool) {
+                $items[] = $itemKey;
+            }
+
+            $poolsData[$poolName] = array_values(array_unique($items));
+        }
+
+        // Rebuild the entire file
+        foreach ($poolsData as $poolName => $items) {
+            if (empty($items)) {
+                $replacement = "{$poolName} = [\n]";
+            } else {
+                $formattedItems = '';
+                foreach ($items as $item) {
+                    $formattedItems .= "\n    \"{$item}\",";
                 }
+                $replacement = "{$poolName} = [{$formattedItems}\n]";
             }
-        }
 
-        // If already in the correct pool, do nothing
-        if ($currentPool === $newPool) {
-            return;
-        }
-
-        // Remove from current pool and add to new pool
-        if ($currentPool) {
-            $content = preg_replace('/\s*"' . preg_quote($itemKey, '/') . '",?\n?/', '', $content);
-        }
-
-        // Add to new pool
-        $poolPattern = "/{$newPool}\s*=\s*\[(.*?)\]/s";
-        if (preg_match($poolPattern, $content, $matches)) {
-            $listContent = $matches[1];
-            if (strpos($listContent, '"' . $itemKey . '"') === false) {
-                $newItem = '    "' . $itemKey . '",';
-                $replacement = $newPool . ' = [' . $listContent . "\n" . $newItem . "\n]";
-                $content = preg_replace($poolPattern, $replacement, $content);
-            }
+            $pattern = '/' . preg_quote($poolName, '/') . '\s*=\s*\[.*?\]/s';
+            $content = preg_replace($pattern, $replacement, $content);
         }
 
         $disk->put($settingsPath, $content);
     }
 
+    /**
+     * Remove item from settings.py (from all pools)
+     */
     private function removeItemFromSettings($disk, $scanPath, $itemKey)
     {
         $settingsPath = "{$scanPath}/settings.py";
         $content = $disk->get($settingsPath);
 
-        // Remove the item from both pools
-        $content = preg_replace('/\s*"' . preg_quote($itemKey, '/') . '",?\n?/', '', $content);
+        // Parse all pools and rebuild without the item
+        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
+
+        foreach ($allPools as $poolMatch) {
+            $poolName = $poolMatch[1];
+            $listContent = $poolMatch[2];
+
+            // Extract all items
+            preg_match_all('/"([^"]+)"/m', $listContent, $itemMatches);
+            $items = $itemMatches[1];
+
+            // Remove the target item (case-insensitive)
+            $items = array_filter($items, function($item) use ($itemKey) {
+                return strcasecmp($item, $itemKey) !== 0;
+            });
+
+            $items = array_values(array_unique($items));
+
+            // Build formatted list
+            if (empty($items)) {
+                $replacement = "{$poolName} = [\n]";
+            } else {
+                $formattedItems = '';
+                foreach ($items as $item) {
+                    $formattedItems .= "\n    \"{$item}\",";
+                }
+                $replacement = "{$poolName} = [{$formattedItems}\n]";
+            }
+
+            // Replace the pool
+            $pattern = '/' . preg_quote($poolName, '/') . '\s*=\s*\[.*?\]/s';
+            $content = preg_replace($pattern, $replacement, $content);
+        }
 
         $disk->put($settingsPath, $content);
     }
 
+    /**
+     * Parse settings.py file and extract all items from all pools
+     */
     private function parseSettingsPy($filePath)
     {
         $content = file_get_contents($filePath);
@@ -658,8 +788,7 @@ class ScanController extends Controller
             }
         }
 
-        // Extract any other custom pools (e.g., VERSION_SPECIFIC_POOL, SHELF_POOL, etc.)
-        // Pattern: ANYTHING_POOL = [...]
+        // Extract any other custom pools
         preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
 
         foreach ($allPools as $poolMatch) {
@@ -681,6 +810,9 @@ class ScanController extends Controller
         return $items;
     }
 
+    /**
+     * Get all available pool names from settings.py
+     */
     private function getAvailablePools($filePath)
     {
         $content = file_get_contents($filePath);
@@ -704,9 +836,12 @@ class ScanController extends Controller
         return $pools;
     }
 
+    /**
+     * Convert item key to human-readable label
+     * Example: DIAMOND_SWORD -> Diamond Sword
+     */
     private function autoLabel($key)
     {
-        // Convert DIAMOND_SWORD -> Diamond Sword
         return ucwords(str_replace('_', ' ', strtolower($key)));
     }
 }

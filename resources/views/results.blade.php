@@ -177,7 +177,7 @@
                     @if ($item['texture_url'])
                         <img src="{{ $item['texture_url'] }}" alt="{{ $item['key'] }}" class="pixelated" style="width: 128px; height: 128px; image-rendering: pixelated;">
                         <!-- Download button appears on hover -->
-                        <button onclick="downloadImage('{{ $item['texture_url'] }}', '{{ $item['key'] }}.png')"
+                        <button onclick="downloadImage('{{ $item['texture_url'] }}', '{{ strtolower($item['key']) }}.png')"
                                 class="absolute top-2 right-2 bg-blue-600 hover:bg-blue-700 text-white p-1.5 rounded-lg opacity-0 group-hover/img:opacity-100 transition shadow-lg"
                                 title="Download image">
                             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -300,28 +300,20 @@
             <div class="mb-4">
                 <label class="block text-gray-300 font-semibold mb-2">
                     Item Key
-                    <span class="text-xs text-gray-400 font-normal ml-2">💡 Used in settings.py and as filename</span>
                 </label>
-                <input type="text" name="item_key" required
-                       placeholder="diamond_sword or DIAMOND_SWORD"
+                <input id="itemKey" type="text" name="item_key" required
+                       placeholder="DIAMOND_SWORD"
+                       oninput="updateFilenamePreview(this.value)"
+                       pattern="[A-Z0-9_]+"
                        class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <p class="text-xs text-gray-400 mt-1">Tip: Use lowercase_with_underscores or UPPERCASE_WITH_UNDERSCORES</p>
-            </div>
-
-            <div class="mb-4">
-                <label class="block text-gray-300 font-semibold mb-2">
-                    Display Label
-                    <span class="text-xs text-gray-400 font-normal ml-2">💡 Shown in gallery (cosmetic only)</span>
-                </label>
-                <input type="text" name="item_label" required
-                       placeholder="Diamond Sword"
-                       class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <p class="text-xs text-gray-400 mt-1">Only UPPERCASE letters, numbers, and underscores allowed</p>
             </div>
 
             <div class="mb-4">
                 <label class="block text-gray-300 font-semibold mb-2">Texture File (PNG, 16x16)</label>
                 <input type="file" name="texture" accept=".png" required
                        class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <p class="text-xs text-gray-400 mt-1">Will be saved as: <span id="filenamePreview" class="text-green-400 font-mono">item_key.png</span></p>
             </div>
 
             <div class="mb-6">
@@ -358,20 +350,12 @@
             <div class="mb-4">
                 <label class="block text-gray-300 font-semibold mb-2">
                     Item Key
-                    <span class="text-xs text-gray-400 font-normal ml-2">💡 Used in settings.py and as filename</span>
                 </label>
                 <input type="text" name="item_key" id="editKey" required
+                       oninput="this.value = this.value.toUpperCase().replace(/[^A-Z0-9_]/g, '')"
+                       pattern="[A-Z0-9_]+"
                        class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                <p class="text-xs text-gray-400 mt-1">Changing this will rename the file</p>
-            </div>
-
-            <div class="mb-4">
-                <label class="block text-gray-300 font-semibold mb-2">
-                    Display Label
-                    <span class="text-xs text-gray-400 font-normal ml-2">💡 Shown in gallery (cosmetic only)</span>
-                </label>
-                <input type="text" name="item_label" id="editLabel" required
-                       class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
+                <p class="text-xs text-gray-400 mt-1">Changing this will rename the PNG file to <span id="editFilenamePreview" class="text-green-400 font-mono">key.png</span></p>
             </div>
 
             <div class="mb-4">
@@ -417,8 +401,23 @@
     const checkboxes = document.querySelectorAll('.filter-checkbox');
     let galleryItems = document.querySelectorAll('.gallery-item');
 
+    // Update filename preview in Add modal
+    function updateFilenamePreview(value) {
+        // Force uppercase and remove invalid characters
+        const cleanValue = value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
+        document.getElementById('itemKey').value = cleanValue;
+
+        const preview = cleanValue ? cleanValue.toLowerCase() + '.png' : 'item_key.png';
+        document.getElementById('filenamePreview').textContent = preview;
+    }
+
+    // Update filename preview in Edit modal
+    document.getElementById('editKey')?.addEventListener('input', function() {
+        const preview = this.value.toLowerCase() + '.png';
+        document.getElementById('editFilenamePreview').textContent = preview;
+    });
+
     function downloadImage(url, filename) {
-        // Keep original filename case
         fetch(url)
             .then(response => response.blob())
             .then(blob => {
@@ -816,6 +815,7 @@
     function closeAddModal() {
         document.getElementById('addModal').classList.add('hidden');
         document.getElementById('addForm').reset();
+        document.getElementById('filenamePreview').textContent = 'item_key.png';
     }
 
     document.getElementById('addForm').addEventListener('submit', async (e) => {
@@ -847,7 +847,7 @@
     function editItem(item) {
         document.getElementById('editOldKey').value = item.key;
         document.getElementById('editKey').value = item.key;
-        document.getElementById('editLabel').value = item.label || '';
+        document.getElementById('editFilenamePreview').textContent = item.key.toLowerCase() + '.png';
         document.getElementById('editPool').value = 'ALL_ITEM_POOL'; // Default
         document.getElementById('editModal').classList.remove('hidden');
     }
