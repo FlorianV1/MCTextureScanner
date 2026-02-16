@@ -34,8 +34,10 @@ class ScanController extends Controller
 
             $items = $this->parseSettingsPy($settingsPy->getRealPath());
 
-            // Get pool information
+            // Get pool and category information
             $itemPools = $this->getItemPools($settingsPy->getRealPath());
+            $itemCategories = $this->getItemCategories($settingsPy->getRealPath());
+            $itemOrders = $this->getItemOrders($settingsPy->getRealPath());
 
             // Create case-insensitive lookup map
             $itemKeysLowerMap = [];
@@ -107,7 +109,9 @@ class ScanController extends Controller
                     'wrong_size_info' => $wrongSize[$key] ?? null,
                     'duplicate' => $isDuplicate,
                     'has_problem' => $hasProblem,
-                    'pool' => $itemPools[$key] ?? null, // Always include pool info
+                    'pool' => $itemPools[$key] ?? null,
+                    'category' => $itemCategories[$key] ?? null,
+                    'order' => $itemOrders[$key] ?? 999,
                 ];
             }
 
@@ -175,9 +179,11 @@ class ScanController extends Controller
             ? $this->getAvailablePools($settingsPath)
             : ['ALL_ITEM_POOL', 'OWN_RISK_ITEM_POOL'];
 
-        // Fix old reports that don't have pool information
+        // Fix old reports that don't have pool/category/order information
         if (file_exists($settingsPath)) {
             $itemPools = $this->getItemPools($settingsPath);
+            $itemCategories = $this->getItemCategories($settingsPath);
+            $itemOrders = $this->getItemOrders($settingsPath);
             $needsUpdate = false;
 
             foreach ($report['gallery'] as &$item) {
@@ -185,17 +191,29 @@ class ScanController extends Controller
                     $item['pool'] = $itemPools[$item['key']] ?? null;
                     $needsUpdate = true;
                 }
+                if (!isset($item['category'])) {
+                    $item['category'] = $itemCategories[$item['key']] ?? null;
+                    $needsUpdate = true;
+                }
+                if (!isset($item['order'])) {
+                    $item['order'] = $itemOrders[$item['key']] ?? 999;
+                    $needsUpdate = true;
+                }
             }
 
-            // Save updated report if we added pool info
             if ($needsUpdate) {
                 $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
             }
         } else {
-            // Ensure pool key exists even if settings file doesn't exist
             foreach ($report['gallery'] as &$item) {
                 if (!isset($item['pool'])) {
                     $item['pool'] = null;
+                }
+                if (!isset($item['category'])) {
+                    $item['category'] = null;
+                }
+                if (!isset($item['order'])) {
+                    $item['order'] = 999;
                 }
             }
         }
@@ -218,6 +236,128 @@ class ScanController extends Controller
         $content = $disk->get($settingsPath);
 
         return response()->json(['success' => true, 'content' => $content]);
+    }
+
+    public function updateCategory(Request $request)
+    {
+        try {
+            $request->validate([
+                'scan_id' => 'required|string',
+                'item_key' => 'required|string',
+                'category' => 'nullable|string',
+            ]);
+
+            $scanId = $request->scan_id;
+            $scanPath = "scans/{$scanId}";
+            $disk = Storage::disk('public');
+
+            $reportPath = "{$scanPath}/report.json";
+            if (!$disk->exists($reportPath)) {
+                return response()->json(['success' => false, 'error' => 'Scan not found'], 404);
+            }
+
+            $report = json_decode($disk->get($reportPath), true);
+
+            // Update category in report
+            foreach ($report['gallery'] as &$item) {
+                if ($item['key'] === $request->item_key) {
+                    $item['category'] = $request->category;
+                    break;
+                }
+            }
+
+            $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            // Rebuild settings.py with categories
+            $this->rebuildSettingsWithCategories($disk, $scanPath, $report['gallery']);
+
+            return response()->json(['success' => true]);
+
+        } catch (\Exception $e) {
+            \Log::error('Update category error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function bulkUpdateCategory(Request $request)
+    {
+        try {
+            $request->validate([
+                'scan_id' => 'required|string',
+                'item_keys' => 'required|array',
+                'item_keys.*' => 'required|string',
+                'category' => 'nullable|string',
+            ]);
+
+            $scanId = $request->scan_id;
+            $scanPath = "scans/{$scanId}";
+            $disk = Storage::disk('public');
+
+            $reportPath = "{$scanPath}/report.json";
+            if (!$disk->exists($reportPath)) {
+                return response()->json(['success' => false, 'error' => 'Scan not found'], 404);
+            }
+
+            $report = json_decode($disk->get($reportPath), true);
+            $itemKeys = $request->item_keys;
+
+            // Update categories in report
+            foreach ($report['gallery'] as &$item) {
+                if (in_array($item['key'], $itemKeys)) {
+                    $item['category'] = $request->category;
+                }
+            }
+
+            $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            // Rebuild settings.py with categories
+            $this->rebuildSettingsWithCategories($disk, $scanPath, $report['gallery']);
+
+            return response()->json(['success' => true, 'updated_count' => count($itemKeys)]);
+
+        } catch (\Exception $e) {
+            \Log::error('Bulk update category error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    public function reorderItems(Request $request)
+    {
+        try {
+            $request->validate([
+                'scan_id' => 'required|string',
+                'item_orders' => 'required|array',
+            ]);
+
+            $scanId = $request->scan_id;
+            $scanPath = "scans/{$scanId}";
+            $disk = Storage::disk('public');
+
+            $reportPath = "{$scanPath}/report.json";
+            if (!$disk->exists($reportPath)) {
+                return response()->json(['success' => false, 'error' => 'Scan not found'], 404);
+            }
+
+            $report = json_decode($disk->get($reportPath), true);
+
+            // Update orders in report
+            foreach ($report['gallery'] as &$item) {
+                if (isset($request->item_orders[$item['key']])) {
+                    $item['order'] = $request->item_orders[$item['key']];
+                }
+            }
+
+            $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            // Rebuild settings.py with new order
+            $this->rebuildSettingsWithCategories($disk, $scanPath, $report['gallery']);
+
+            return response()->json(['success' => true]);
+
+        } catch (\Exception $e) {
+            \Log::error('Reorder items error: ' . $e->getMessage());
+            return response()->json(['success' => false, 'error' => $e->getMessage()], 500);
+        }
     }
 
     public function addTexture(Request $request)
@@ -256,8 +396,6 @@ class ScanController extends Controller
             $textureFilename = strtolower($itemKey) . '.png';
             $storedPath = $request->file('texture')->storeAs("{$scanPath}/textures", $textureFilename, 'public');
 
-            $this->addItemToSettings($disk, $scanPath, $itemKey, $request->item_pool);
-
             $itemLabel = $this->autoLabel($itemKey);
 
             $newItem = [
@@ -271,6 +409,8 @@ class ScanController extends Controller
                 'duplicate' => false,
                 'has_problem' => false,
                 'pool' => $request->item_pool,
+                'category' => null,
+                'order' => 999,
             ];
 
             $report['gallery'] = array_filter($report['gallery'], function($item) use ($itemKey) {
@@ -282,6 +422,9 @@ class ScanController extends Controller
             $report['summary']['total_textures']++;
 
             $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            // Rebuild settings.py
+            $this->rebuildSettingsWithCategories($disk, $scanPath, $report['gallery']);
 
             return response()->json(['success' => true]);
 
@@ -348,12 +491,6 @@ class ScanController extends Controller
                 }
             }
 
-            if ($oldKey !== $newKey) {
-                $this->updateItemKeyInSettings($disk, $scanPath, $oldKey, $newKey, $request->item_pool);
-            } else {
-                $this->updateItemPoolInSettings($disk, $scanPath, $newKey, $request->item_pool);
-            }
-
             $itemLabel = $this->autoLabel($newKey);
 
             foreach ($report['gallery'] as &$item) {
@@ -369,6 +506,9 @@ class ScanController extends Controller
             }
 
             $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            // Rebuild settings.py
+            $this->rebuildSettingsWithCategories($disk, $scanPath, $report['gallery']);
 
             return response()->json(['success' => true]);
 
@@ -400,11 +540,16 @@ class ScanController extends Controller
             $addedCount = 0;
             foreach ($report['gallery'] as &$item) {
                 if ($item['missing_name'] && !$item['missing_texture']) {
-                    $this->addItemToSettings($disk, $scanPath, $item['key'], $request->item_pool);
-
                     $item['missing_name'] = false;
                     $item['has_problem'] = $item['missing_texture'] || $item['wrong_size'] || $item['duplicate'];
                     $item['pool'] = $request->item_pool;
+
+                    if (!isset($item['category'])) {
+                        $item['category'] = null;
+                    }
+                    if (!isset($item['order'])) {
+                        $item['order'] = 999;
+                    }
 
                     $addedCount++;
                 }
@@ -414,6 +559,9 @@ class ScanController extends Controller
             $report['summary']['missing_names'] = max(0, $report['summary']['missing_names'] - $addedCount);
 
             $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            // Rebuild settings.py
+            $this->rebuildSettingsWithCategories($disk, $scanPath, $report['gallery']);
 
             return response()->json([
                 'success' => true,
@@ -452,23 +600,29 @@ class ScanController extends Controller
             $itemKeys = $request->item_keys;
             $addedCount = 0;
 
-            foreach ($itemKeys as $itemKey) {
-                $this->addItemToSettings($disk, $scanPath, $itemKey, $request->item_pool);
+            foreach ($report['gallery'] as &$item) {
+                if (in_array($item['key'], $itemKeys)) {
+                    $item['missing_name'] = false;
+                    $item['has_problem'] = $item['missing_texture'] || $item['wrong_size'] || $item['duplicate'];
+                    $item['pool'] = $request->item_pool;
 
-                foreach ($report['gallery'] as &$item) {
-                    if ($item['key'] === $itemKey) {
-                        $item['missing_name'] = false;
-                        $item['has_problem'] = $item['missing_texture'] || $item['wrong_size'] || $item['duplicate'];
-                        $item['pool'] = $request->item_pool;
-                        $addedCount++;
-                        break;
+                    if (!isset($item['category'])) {
+                        $item['category'] = null;
                     }
+                    if (!isset($item['order'])) {
+                        $item['order'] = 999;
+                    }
+
+                    $addedCount++;
                 }
             }
 
             $report['summary']['missing_names'] = max(0, $report['summary']['missing_names'] - $addedCount);
 
             $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            // Rebuild settings.py
+            $this->rebuildSettingsWithCategories($disk, $scanPath, $report['gallery']);
 
             return response()->json(['success' => true, 'added_count' => $addedCount]);
 
@@ -507,8 +661,6 @@ class ScanController extends Controller
                     $deletedCount++;
                 }
 
-                $this->removeItemFromSettings($disk, $scanPath, $itemKey);
-
                 $report['gallery'] = array_values(array_filter($report['gallery'], function($item) use ($itemKey) {
                     return $item['key'] !== $itemKey;
                 }));
@@ -518,6 +670,9 @@ class ScanController extends Controller
             $report['summary']['total_textures'] = max(0, $report['summary']['total_textures'] - $deletedCount);
 
             $disk->put($reportPath, json_encode($report, JSON_PRETTY_PRINT));
+
+            // Rebuild settings.py
+            $this->rebuildSettingsWithCategories($disk, $scanPath, $report['gallery']);
 
             return response()->json(['success' => true, 'deleted_count' => $deletedCount]);
 
@@ -576,178 +731,88 @@ class ScanController extends Controller
         }
     }
 
-    private function addItemToSettings($disk, $scanPath, $itemKey, $pool)
+    /**
+     * Rebuild settings.py with categories and ordering
+     */
+    private function rebuildSettingsWithCategories($disk, $scanPath, $gallery)
     {
         $settingsPath = "{$scanPath}/settings.py";
-        $content = $disk->get($settingsPath);
 
-        $poolPattern = "/{$pool}\s*=\s*\[(.*?)\]/s";
+        // Group items by pool
+        $pools = [
+            'ALL_ITEM_POOL' => [],
+            'OWN_RISK_ITEM_POOL' => [],
+        ];
 
-        if (preg_match($poolPattern, $content, $matches)) {
-            $listContent = $matches[1];
+        foreach ($gallery as $item) {
+            $pool = $item['pool'] ?? null;
+            if ($pool && isset($pools[$pool])) {
+                $pools[$pool][] = $item;
+            }
+        }
 
-            preg_match_all('/"([^"]+)"/m', $listContent, $existingItems);
-            $items = $existingItems[1];
+        // Build settings.py content
+        $content = "";
 
-            $itemExists = false;
-            foreach ($items as $existingItem) {
-                if (strcasecmp($existingItem, $itemKey) === 0) {
-                    $itemExists = true;
-                    break;
-                }
+        foreach ($pools as $poolName => $items) {
+            if (empty($items)) {
+                $content .= "{$poolName} = [\n]\n\n";
+                continue;
             }
 
-            if (!$itemExists) {
-                $items[] = $itemKey;
+            // Sort by order
+            usort($items, function($a, $b) {
+                return ($a['order'] ?? 999) <=> ($b['order'] ?? 999);
+            });
 
-                $uniqueItems = [];
-                $lowerMap = [];
-                foreach ($items as $item) {
-                    $lowerKey = strtolower($item);
-                    if (!isset($lowerMap[$lowerKey])) {
-                        $uniqueItems[] = $item;
-                        $lowerMap[$lowerKey] = true;
+            // Group by category
+            $categorized = [];
+            $uncategorized = [];
+
+            foreach ($items as $item) {
+                $category = $item['category'] ?? null;
+                if ($category) {
+                    if (!isset($categorized[$category])) {
+                        $categorized[$category] = [];
                     }
+                    $categorized[$category][] = $item['key'];
+                } else {
+                    $uncategorized[] = $item['key'];
+                }
+            }
+
+            // Write pool
+            $content .= "{$poolName} = [\n";
+
+            // Write uncategorized items first
+            if (!empty($uncategorized)) {
+                foreach ($uncategorized as $key) {
+                    $content .= "    \"{$key}\",\n";
+                }
+                if (!empty($categorized)) {
+                    $content .= "\n";
+                }
+            }
+
+            // Write categorized items
+            $categoryIndex = 0;
+            foreach ($categorized as $category => $keys) {
+                $content .= "    # {$category}\n";
+                foreach ($keys as $key) {
+                    $content .= "    \"{$key}\",\n";
                 }
 
-                $formattedItems = '';
-                foreach ($uniqueItems as $item) {
-                    $formattedItems .= "\n    \"{$item}\",";
+                // Add blank line between categories (but not after last one)
+                $categoryIndex++;
+                if ($categoryIndex < count($categorized)) {
+                    $content .= "\n";
                 }
-
-                $replacement = "{$pool} = [{$formattedItems}\n]";
-                $content = preg_replace($poolPattern, $replacement, $content);
-
-                $disk->put($settingsPath, $content);
-            }
-        }
-    }
-
-    private function updateItemKeyInSettings($disk, $scanPath, $oldKey, $newKey, $newPool)
-    {
-        $settingsPath = "{$scanPath}/settings.py";
-        $content = $disk->get($settingsPath);
-
-        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
-
-        $poolsData = [];
-
-        foreach ($allPools as $poolMatch) {
-            $poolName = $poolMatch[1];
-            $listContent = $poolMatch[2];
-
-            preg_match_all('/"([^"]+)"/m', $listContent, $itemMatches);
-            $items = array_filter($itemMatches[1]);
-
-            $items = array_filter($items, function($item) use ($oldKey) {
-                return strcasecmp($item, $oldKey) !== 0;
-            });
-
-            if ($poolName === $newPool) {
-                $items[] = $newKey;
             }
 
-            $poolsData[$poolName] = array_values(array_unique($items));
+            $content .= "]\n\n";
         }
 
-        foreach ($poolsData as $poolName => $items) {
-            if (empty($items)) {
-                $replacement = "{$poolName} = [\n]";
-            } else {
-                $formattedItems = '';
-                foreach ($items as $item) {
-                    $formattedItems .= "\n    \"{$item}\",";
-                }
-                $replacement = "{$poolName} = [{$formattedItems}\n]";
-            }
-
-            $pattern = '/' . preg_quote($poolName, '/') . '\s*=\s*\[.*?\]/s';
-            $content = preg_replace($pattern, $replacement, $content);
-        }
-
-        $disk->put($settingsPath, $content);
-    }
-
-    private function updateItemPoolInSettings($disk, $scanPath, $itemKey, $newPool)
-    {
-        $settingsPath = "{$scanPath}/settings.py";
-        $content = $disk->get($settingsPath);
-
-        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
-
-        $poolsData = [];
-
-        foreach ($allPools as $poolMatch) {
-            $poolName = $poolMatch[1];
-            $listContent = $poolMatch[2];
-
-            preg_match_all('/"([^"]+)"/m', $listContent, $itemMatches);
-            $items = array_filter($itemMatches[1]);
-
-            $items = array_filter($items, function($item) use ($itemKey) {
-                return strcasecmp($item, $itemKey) !== 0;
-            });
-
-            if ($poolName === $newPool) {
-                $items[] = $itemKey;
-            }
-
-            $poolsData[$poolName] = array_values(array_unique($items));
-        }
-
-        foreach ($poolsData as $poolName => $items) {
-            if (empty($items)) {
-                $replacement = "{$poolName} = [\n]";
-            } else {
-                $formattedItems = '';
-                foreach ($items as $item) {
-                    $formattedItems .= "\n    \"{$item}\",";
-                }
-                $replacement = "{$poolName} = [{$formattedItems}\n]";
-            }
-
-            $pattern = '/' . preg_quote($poolName, '/') . '\s*=\s*\[.*?\]/s';
-            $content = preg_replace($pattern, $replacement, $content);
-        }
-
-        $disk->put($settingsPath, $content);
-    }
-
-    private function removeItemFromSettings($disk, $scanPath, $itemKey)
-    {
-        $settingsPath = "{$scanPath}/settings.py";
-        $content = $disk->get($settingsPath);
-
-        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
-
-        foreach ($allPools as $poolMatch) {
-            $poolName = $poolMatch[1];
-            $listContent = $poolMatch[2];
-
-            preg_match_all('/"([^"]+)"/m', $listContent, $itemMatches);
-            $items = $itemMatches[1];
-
-            $items = array_filter($items, function($item) use ($itemKey) {
-                return strcasecmp($item, $itemKey) !== 0;
-            });
-
-            $items = array_values(array_unique($items));
-
-            if (empty($items)) {
-                $replacement = "{$poolName} = [\n]";
-            } else {
-                $formattedItems = '';
-                foreach ($items as $item) {
-                    $formattedItems .= "\n    \"{$item}\",";
-                }
-                $replacement = "{$poolName} = [{$formattedItems}\n]";
-            }
-
-            $pattern = '/' . preg_quote($poolName, '/') . '\s*=\s*\[.*?\]/s';
-            $content = preg_replace($pattern, $replacement, $content);
-        }
-
-        $disk->put($settingsPath, $content);
+        $disk->put($settingsPath, trim($content));
     }
 
     private function parseSettingsPy($filePath)
@@ -811,6 +876,59 @@ class ScanController extends Controller
         }
 
         return $itemPools;
+    }
+
+    private function getItemCategories($filePath)
+    {
+        $content = file_get_contents($filePath);
+        $itemCategories = [];
+
+        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
+
+        foreach ($allPools as $poolMatch) {
+            $listContent = $poolMatch[2];
+            $lines = explode("\n", $listContent);
+            $currentCategory = null;
+
+            foreach ($lines as $line) {
+                $line = trim($line);
+
+                // Check for category comment
+                if (preg_match('/^#\s*(.+)$/', $line, $categoryMatch)) {
+                    $currentCategory = trim($categoryMatch[1]);
+                }
+                // Check for item
+                else if (preg_match('/"([^"]+)"/', $line, $itemMatch)) {
+                    $itemName = trim($itemMatch[1]);
+                    if ($currentCategory) {
+                        $itemCategories[$itemName] = $currentCategory;
+                    }
+                }
+            }
+        }
+
+        return $itemCategories;
+    }
+
+    private function getItemOrders($filePath)
+    {
+        $content = file_get_contents($filePath);
+        $itemOrders = [];
+
+        preg_match_all('/([A-Z_]+_POOL)\s*=\s*\[(.*?)\]/s', $content, $allPools, PREG_SET_ORDER);
+
+        foreach ($allPools as $poolMatch) {
+            $listContent = $poolMatch[2];
+            preg_match_all('/"([^"]+)"/m', $listContent, $itemMatches);
+
+            $order = 0;
+            foreach ($itemMatches[1] as $itemName) {
+                $itemName = trim($itemName);
+                $itemOrders[$itemName] = $order++;
+            }
+        }
+
+        return $itemOrders;
     }
 
     private function autoLabel($key)

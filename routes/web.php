@@ -13,4 +13,7 @@ Route::post('/scan/add-texture', [ScanController::class, 'addTexture'])->name('a
 Route::post('/scan/bulk-add-missing', [ScanController::class, 'bulkAddMissing'])->name('bulk-add-missing');
 Route::post('/scan/edit-texture', [ScanController::class, 'editTexture'])->name('edit-texture');
 Route::post('/scan/delete-textures', [ScanController::class, 'deleteTextures'])->name('delete-textures');
-Route::post('/scan/bulk-add-to-pool', [ScanController::class, 'bulkAddToPool']);
+Route::post('/scan/bulk-add-to-pool', [ScanController::class, 'bulkAddToPool'])->name('bulk-add-to-pool');
+Route::post('/scan/update-category', [ScanController::class, 'updateCategory'])->name('update-category');
+Route::post('/scan/bulk-update-category', [ScanController::class, 'bulkUpdateCategory'])->name('bulk-update-category');
+Route::post('/scan/reorder-items', [ScanController::class, 'reorderItems'])->name('reorder-items');

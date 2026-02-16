@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Scan Results - {{ $report['scan_id'] }}</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.0/Sortable.min.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
@@ -73,6 +74,9 @@
         </button>
         <button id="addToPoolBtn" onclick="showAddToPoolModal()" class="bg-purple-600 hover:bg-purple-700 text-white font-semibold py-3 px-6 rounded-lg transition hidden">
             📥 Add to Pool (<span id="selectedCountPool">0</span>)
+        </button>
+        <button id="setCategoryBtn" onclick="showSetCategoryModal()" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 px-6 rounded-lg transition hidden">
+            🏷️ Set Category (<span id="selectedCountCategory">0</span>)
         </button>
         <button id="deleteSelectedBtn" onclick="deleteSelected()" class="bg-red-600 hover:bg-red-700 text-white font-semibold py-3 px-6 rounded-lg transition hidden">
             🗑️ Delete Selected (<span id="selectedCount">0</span>)
@@ -196,7 +200,16 @@
                  data-actual-label="{{ $item['label'] ?? '' }}"
                  data-texture-url="{{ $item['texture_url'] ?? '' }}"
                  data-pool="{{ $item['pool'] ?? '' }}"
+                 data-category="{{ $item['category'] ?? '' }}"
+                 data-order="{{ $item['order'] ?? 999 }}"
                  data-index="{{ $index }}">
+
+{{--                <!-- Drag Handle -->--}}
+{{--                <div class="drag-handle w-full flex justify-center mb-2 cursor-move text-gray-500 hover:text-blue-400" title="Drag to reorder">--}}
+{{--                    <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">--}}
+{{--                        <path d="M7 2a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 2zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 7 14zm6-8a2 2 0 1 0-.001-4.001A2 2 0 0 0 13 6zm0 2a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 8zm0 6a2 2 0 1 0 .001 4.001A2 2 0 0 0 13 14z"></path>--}}
+{{--                    </svg>--}}
+{{--                </div>--}}
 
                 <!-- Larger Selection Checkbox -->
                 <div class="w-full flex justify-end mb-2">
@@ -234,6 +247,28 @@
                 <div class="text-xs text-gray-400 text-center mb-3 font-mono break-all w-full">
                     {{ $item['key'] }}
                 </div>
+
+                <!-- Category Input -->
+                <div class="w-full mb-2">
+                    <div class="flex items-center gap-1 min-w-0">
+                        <input
+                            type="text"
+                            placeholder="Category..."
+                            value="{{ $item['category'] ?? '' }}"
+                            class="flex-1 min-w-0 px-2 py-1 bg-gray-900 border border-gray-700 text-white text-xs rounded focus:outline-none focus:ring-1 focus:ring-blue-500"
+                            id="category-{{ $item['key'] }}"
+                            data-item-key="{{ $item['key'] }}"
+                        />
+                        <button
+                            onclick="saveCategory('{{ $item['key'] }}')"
+                            class="shrink-0 px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white text-xs rounded transition"
+                            title="Save category"
+                        >
+                            💾
+                        </button>
+                    </div>
+                </div>
+
 
                 <!-- Badges -->
                 <div class="flex flex-wrap gap-1.5 justify-center mb-3">
@@ -312,6 +347,37 @@
                     ✅ Add to Pool
                 </button>
                 <button type="button" onclick="closeAddToPoolModal()" class="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition">
+                    Cancel
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- Set Category Modal -->
+<div id="setCategoryModal" class="hidden fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50 p-4">
+    <div class="bg-gray-800 rounded-lg shadow-2xl p-8 max-w-md w-full border border-gray-700">
+        <h2 class="text-2xl font-bold text-white mb-6">Set Category</h2>
+        <p class="text-gray-300 mb-6">Set category for <strong><span id="setCategoryCount">0</span> selected item(s)</strong></p>
+
+        <form id="setCategoryForm">
+            @csrf
+            <div class="mb-6">
+                <label class="block text-gray-300 font-semibold mb-2">Category Name</label>
+                <input
+                    type="text"
+                    name="category"
+                    placeholder="e.g., Weapons, Tools, Food"
+                    class="w-full px-4 py-2 bg-gray-900 border border-gray-700 text-white rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                <p class="text-xs text-gray-400 mt-1">Leave empty to remove category</p>
+            </div>
+
+            <div class="flex gap-3">
+                <button type="submit" class="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 px-4 rounded-lg transition">
+                    ✅ Set Category
+                </button>
+                <button type="button" onclick="closeSetCategoryModal()" class="flex-1 bg-gray-700 hover:bg-gray-600 text-white font-bold py-3 px-4 rounded-lg transition">
                     Cancel
                 </button>
             </div>
@@ -479,16 +545,15 @@
             const words = key.split('_');
 
             words.forEach(word => {
-                if (word.length > 2) { // Ignore very short words
+                if (word.length > 2) {
                     wordCounts[word] = (wordCounts[word] || 0) + 1;
                 }
             });
         });
 
-        // Get words that appear 5+ times
         const commonWords = Object.entries(wordCounts)
             .filter(([word, count]) => count >= 5)
-            .sort((a, b) => b[1] - a[1]); // Sort by frequency
+            .sort((a, b) => b[1] - a[1]);
 
         const optgroup = wordFilter.querySelector('optgroup');
         commonWords.forEach(([word, count]) => {
@@ -501,7 +566,6 @@
 
     buildWordFilter();
 
-    // Update filename preview in Add modal
     function updateFilenamePreview(value) {
         const cleanValue = value.toUpperCase().replace(/[^A-Z0-9_]/g, '');
         document.getElementById('itemKey').value = cleanValue;
@@ -510,7 +574,6 @@
         document.getElementById('filenamePreview').textContent = preview;
     }
 
-    // Update filename preview in Edit modal
     document.getElementById('editKey')?.addEventListener('input', function() {
         const preview = this.value.toLowerCase() + '.png';
         document.getElementById('editFilenamePreview').textContent = preview;
@@ -599,7 +662,6 @@
                 );
             }
 
-            // Pool filter
             let matchesPool = true;
             if (poolFilterValue) {
                 if (poolFilterValue === 'no_pool') {
@@ -609,7 +671,6 @@
                 }
             }
 
-            // Word filter
             let matchesWord = true;
             if (wordFilterValue) {
                 matchesWord = actualKey.includes(wordFilterValue);
@@ -630,7 +691,6 @@
     poolFilter.addEventListener('change', applyFilters);
     wordFilter.addEventListener('change', applyFilters);
 
-    // Sorting functionality
     function applySorting() {
         const sortBy = document.getElementById('sortBy').value;
         const gallery = document.getElementById('gallery');
@@ -755,13 +815,14 @@
         applySorting();
     }
 
-    // Multi-select functionality
     function updateSelectedCount() {
         const selected = document.querySelectorAll('.item-checkbox:checked').length;
         document.getElementById('selectedCount').textContent = selected;
         document.getElementById('selectedCountPool').textContent = selected;
+        document.getElementById('selectedCountCategory').textContent = selected;
         document.getElementById('deleteSelectedBtn').classList.toggle('hidden', selected === 0);
         document.getElementById('addToPoolBtn').classList.toggle('hidden', selected === 0);
+        document.getElementById('setCategoryBtn').classList.toggle('hidden', selected === 0);
         document.getElementById('deselectAllBtn').classList.toggle('hidden', selected === 0);
     }
 
@@ -779,7 +840,6 @@
         updateSelectedCount();
     }
 
-    // Add to Pool Modal
     function showAddToPoolModal() {
         const selected = document.querySelectorAll('.item-checkbox:checked').length;
         document.getElementById('addToPoolCount').textContent = selected;
@@ -816,7 +876,7 @@
                 showToast(`Added ${result.added_count} item(s) to ${formData.get('item_pool')}`, 'success');
                 closeAddToPoolModal();
                 deselectAll();
-                location.reload(); // Reload to update pool badges
+                location.reload();
             } else {
                 showToast('Error: ' + result.error, 'error');
             }
@@ -865,7 +925,6 @@
         }
     }
 
-    // Bulk add missing
     function showBulkAddModal() {
         document.getElementById('bulkAddModal').classList.remove('hidden');
     }
@@ -933,7 +992,6 @@
         }
     });
 
-    // Settings viewer
     async function viewSettings() {
         try {
             const response = await fetch(`/scan/${scanId}/settings`);
@@ -954,7 +1012,6 @@
         document.getElementById('settingsModal').classList.add('hidden');
     }
 
-    // Add texture modal
     function showAddTextureModal() {
         document.getElementById('addModal').classList.remove('hidden');
     }
@@ -989,7 +1046,6 @@
         }
     });
 
-    // Edit modal
     function editItem(item) {
         document.getElementById('editOldKey').value = item.key;
         document.getElementById('editKey').value = item.key;
@@ -1027,7 +1083,6 @@
         }
     });
 
-    // Delete single item
     async function deleteItem(key) {
         if (!confirm(`Delete ${key}?`)) return;
 
@@ -1060,14 +1115,148 @@
         }
     }
 
-    // Export all files
     function exportFiles() {
         window.location.href = `/scan/${scanId}/export`;
     }
 
-    // Hide bulk add button if no missing names
     if (parseInt(document.getElementById('missingNames').textContent) === 0) {
         document.getElementById('bulkAddBtn').style.display = 'none';
+    }
+
+    // ===== CATEGORY FEATURES =====
+
+    async function saveCategory(itemKey) {
+        const input = document.getElementById(`category-${itemKey}`);
+        const category = input.value.trim() || null;
+
+        try {
+            const response = await fetch('/scan/update-category', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    scan_id: scanId,
+                    item_key: itemKey,
+                    category: category
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showToast('Category updated', 'success');
+
+                const item = document.querySelector(`[data-actual-key="${itemKey}"]`);
+                if (item) {
+                    item.dataset.category = category || '';
+                }
+            } else {
+                showToast('Error: ' + result.error, 'error');
+            }
+        } catch (error) {
+            showToast('Failed: ' + error.message, 'error');
+        }
+    }
+
+    function showSetCategoryModal() {
+        const selected = document.querySelectorAll('.item-checkbox:checked').length;
+        document.getElementById('setCategoryCount').textContent = selected;
+        document.getElementById('setCategoryModal').classList.remove('hidden');
+    }
+
+    function closeSetCategoryModal() {
+        document.getElementById('setCategoryModal').classList.add('hidden');
+    }
+
+    document.getElementById('setCategoryForm').addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const formData = new FormData(e.target);
+
+        const selected = Array.from(document.querySelectorAll('.item-checkbox:checked'))
+            .map(cb => cb.dataset.itemKey);
+
+        try {
+            const response = await fetch('/scan/bulk-update-category', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    scan_id: scanId,
+                    item_keys: selected,
+                    category: formData.get('category') || null
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showToast(`Set category for ${result.updated_count} items`, 'success');
+                closeSetCategoryModal();
+                deselectAll();
+
+                const category = formData.get('category');
+                selected.forEach(key => {
+                    const input = document.getElementById(`category-${key}`);
+                    if (input) {
+                        input.value = category || '';
+                    }
+                    const item = document.querySelector(`[data-actual-key="${key}"]`);
+                    if (item) {
+                        item.dataset.category = category || '';
+                    }
+                });
+            } else {
+                showToast('Error: ' + result.error, 'error');
+            }
+        } catch (error) {
+            showToast('Failed: ' + error.message, 'error');
+        }
+    });
+
+    // Initialize drag-and-drop
+    let saveOrderTimeout;
+
+    const sortable = Sortable.create(document.getElementById('gallery'), {
+        animation: 150,
+        handle: '.drag-handle',
+        ghostClass: 'opacity-50',
+        onEnd: function() {
+            clearTimeout(saveOrderTimeout);
+            saveOrderTimeout = setTimeout(saveItemOrder, 500);
+        }
+    });
+
+    async function saveItemOrder() {
+        const items = document.querySelectorAll('.gallery-item');
+        const itemOrders = {};
+
+        items.forEach((item, index) => {
+            const key = item.dataset.actualKey;
+            itemOrders[key] = index;
+        });
+
+        try {
+            const response = await fetch('/scan/reorder-items', {
+                method: 'POST',
+                headers: {
+                    'X-CSRF-TOKEN': '{{ csrf_token() }}',
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    scan_id: scanId,
+                    item_orders: itemOrders
+                })
+            });
+
+            const result = await response.json();
+            if (result.success) {
+                showToast('Order saved', 'success');
+            }
+        } catch (error) {
+            console.error('Failed to save order:', error);
+        }
     }
 </script>
 </body>
